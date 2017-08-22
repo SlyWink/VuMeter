@@ -4,6 +4,7 @@
 
 #include <avr/io.h>
 #include <util/delay.h>
+#include <avr/interrupt.h>
 
 #ifdef DEBUG
   #define SERIAL_DEBUG_DDR DDRB
@@ -19,9 +20,27 @@
 //#define PIN_O_STORE  PB4
 
 //#define ADC_READ_COUNT 4
-#define ADC_READ_COUNT 1
+#define ADC_DROP 4
 
 
+static volatile uint16_t g_adc_min = 0xFFFF;
+static volatile uint16_t g_adc_max = 0 ;
+static volatile uint8_t g_adc_run ;
+
+
+ISR(ADC_vect) {
+  static uint16_t l_adc = 0 ;
+  static uint8_t l_adc_drop = ADC_DROP ;
+
+  l_adc = ADCL ;
+  l_adc += (ADCH << 8) ;
+  if (l_adc_drop) l_adc_drop-- ;
+    else if (l_adc < g_adc_min) g_adc_min = l_adc ;
+      else if (l_adc > g_adc_max) g_adc_max = l_adc ;
+  if (g_adc_run) ADCSRA |= _BV(ADSC) ; // New acquisition
+}
+
+/*
 //uint8_t Audio_Read() {
 uint16_t Audio_Read() {
   uint16_t l_sum ;
@@ -39,12 +58,10 @@ uint16_t Audio_Read() {
 //  return (uint8_t)(l_sum / ADC_READ_COUNT) ;
   return (l_sum / ADC_READ_COUNT) ;
 }
-
+*/
 
 int main(void) {
- uint16_t l_adc_min, l_adc_max, l_adc_zero, l_adc ;
- uint8_t l_count ;
-
+  uint16_t l_adc_min, l_adc_max ;
 
 //  DDRB = _BV(PIN_O_DATE) | _BV(PIN_O_SHIFT) | _BV(PIN_O_STORE) ; //Output
 //  DDRB = 0 ;
@@ -53,29 +70,23 @@ int main(void) {
 
   // ADC init
   ADMUX = _BV(MUX1) | _BV(MUX0) ;
-  ADCSRA = _BV(ADEN) | _BV(ADPS2) ;
+  ADCSRA = _BV(ADEN) | _BV(ADIE) | _BV(ADPS2) ;
 
 #ifdef DEBUG
 //  OSCCAL = 0x56;
   Serial_Debug_Init() ;
 #endif
 
-  _delay_ms(2000);
-  l_adc_zero = Audio_Read() ; // Drop first sample
-  l_adc_zero = Audio_Read() ;
-#ifdef DEBUG
-  Serial_Debug_Send(0xF0) ; _delay_ms(1000) ;
-  Serial_Debug_Send((uint8_t)(l_adc_zero >> 8)) ; _delay_ms(500) ;
-  Serial_Debug_Send((uint8_t)(l_adc_zero & 0xFF)) ; _delay_ms(1000) ;
-  l_adc_min = l_adc_max = l_adc_zero ;
-#endif
 
   for(;;) {
-    for (l_count=0 ; l_count < 100 ; l_count++) {
-      l_adc = Audio_Read() ;
-      if (l_adc > l_adc_max) l_adc_max = l_adc ;
-       else if (l_adc < l_adc_min) l_adc_min = l_adc ;
-    }
+    sei() ;
+      g_adc_run = 1 ;
+      ADCSRA |= _BV(ADSC) ; // Start acquisition
+      _delay_ms(5000) ;
+      g_adc_run = 0 ;
+    cli() ;
+    l_adc_min = g_adc_min ;
+    l_adc_max = g_adc_max ;
 #ifdef DEBUG
     Serial_Debug_Send(0xF1) ; _delay_ms(500) ;
     Serial_Debug_Send((uint8_t)(l_adc_min >> 8)) ; _delay_ms(500) ;
